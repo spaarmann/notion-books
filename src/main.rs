@@ -1,110 +1,39 @@
-use reqwest::Response;
-use serde_derive::Deserialize;
-use std::{collections::HashMap, error::Error, future::Future, io::Write};
-use url::Url;
+mod gbooks;
 
-const BOOKS_API_KEY: &'static str = include_str!("../books_api_key.txt");
+use std::{error::Error, io::Write};
 
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-struct GBookSearchResult {
-    id: String,
-    volume_info: GBookVolumeInfo,
-}
+use crate::gbooks::GBooks;
 
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-struct GBookVolumeInfo {
-    authors: Option<Vec<String>>,
-    image_links: Option<GBookImageLinks>,
-    published_date: Option<String>,
-    publisher: Option<String>,
-    title: String,
-}
-
-#[derive(Deserialize, Debug)]
-#[serde(rename_all = "camelCase")]
-struct GBookImageLinks {
-    thumbnail: String,
-}
-
-fn make_gbook_url(url: &str) -> Result<Url, url::ParseError> {
-    Url::parse(&format!(
-        "https://www.googleapis.com/books/v1/{}&key={}",
-        url, BOOKS_API_KEY,
-    ))
+fn read_stdin_line() -> Result<String, std::io::Error> {
+    std::io::stdout().flush()?;
+    let mut buf = String::new();
+    std::io::stdin().read_line(&mut buf)?;
+    buf.truncate(buf.trim_end().len());
+    Ok(buf)
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    let client = reqwest::Client::new();
+    let gbooks = GBooks::new(include_str!("../books_api_key.txt").to_string());
 
     print!("Enter query: ");
-    std::io::stdout().flush()?;
-    let mut buf = String::new();
-    std::io::stdin().read_line(&mut buf)?;
+    let query = read_stdin_line()?;
 
-    let resp = client
-        .get(make_gbook_url(
-            //"volumes?q=isbn:9780552147682&projection=lite",
-            //"volumes?q=truth pratchett&projection=lite",
-            &format!("volumes?q={}&projection=lite", buf),
-        )?)
-        .send()
-        .await?
-        .json::<serde_json::Value>()
-        .await?;
+    let search_results = gbooks.search(&query).await?.collect::<Vec<_>>();
 
-    let search_results: Vec<GBookSearchResult> =
-        serde_json::from_value(resp.get("items").unwrap().clone())?;
-
-    let chosen_id = if search_results.len() == 1 {
-        &search_results[0].id
+    let chosen_idx = if search_results.len() == 1 {
+        0
     } else {
         println!("Choose book:");
-        for (i, elem) in search_results.iter().enumerate() {
-            println!(
-                "{i}: {title} by {authors} ({publisher}, {published_date})",
-                title = elem.volume_info.title,
-                authors = elem
-                    .volume_info
-                    .authors
-                    .as_ref()
-                    .map(|authors| authors.join(", "))
-                    .unwrap_or(String::new()),
-                publisher = elem
-                    .volume_info
-                    .publisher
-                    .as_ref()
-                    .map(|s| s.as_str())
-                    .unwrap_or(""),
-                published_date = elem
-                    .volume_info
-                    .published_date
-                    .as_ref()
-                    .map(|s| s.as_str())
-                    .unwrap_or("")
-            );
+        for (i, book) in search_results.iter().enumerate() {
+            println!("{i}: {}", book);
         }
 
         print!("> ");
-        std::io::stdout().flush()?;
-        let mut buf = String::new();
-        std::io::stdin().read_line(&mut buf)?;
-        &search_results[buf.trim().parse::<usize>()?].id
+        read_stdin_line()?.parse::<usize>()?
     };
 
-    println!("ID: {chosen_id}");
-
-    //println!("{:#?}", search_results);
-
-    let resp = client
-        .get(make_gbook_url(&format!("volumes/{}?", chosen_id))?)
-        .send()
-        .await?
-        .json::<serde_json::Value>()
-        .await?;
-    println!("{:#?}", resp);
+    println!("{:#?}", search_results[chosen_idx]);
 
     Ok(())
 }

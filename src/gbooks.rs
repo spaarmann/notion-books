@@ -1,6 +1,7 @@
+use eyre::{Context, Result};
 use reqwest::Client;
 use serde_derive::Deserialize;
-use std::{error::Error, fmt::Display};
+use std::fmt::Display;
 use url::Url;
 
 pub struct GBooks {
@@ -44,9 +45,9 @@ impl GBooks {
         }
     }
 
-    pub async fn search(&self, query: &str) -> Result<impl Iterator<Item = GBook>, Box<dyn Error>> {
+    pub async fn search(&self, query: &str) -> Result<impl Iterator<Item = GBook>> {
         let url = {
-            let mut url = Url::parse("https://www.googleapis.com/books/v1/volumes")?;
+            let mut url = Url::parse("https://www.googleapis.com/books/v1/volumes").unwrap();
             url.query_pairs_mut()
                 .append_pair("key", &self.api_key)
                 .append_pair("projection", "full")
@@ -58,12 +59,15 @@ impl GBooks {
             .client
             .get(url)
             .send()
-            .await?
+            .await
+            .wrap_err("Failed to send search request to Google Books")?
             .json::<serde_json::Value>()
-            .await?;
+            .await
+            .wrap_err("Failed to read or parse Google Books response")?;
 
         let search_results: Vec<GBookSearchResult> =
-            serde_json::from_value(response.get("items").unwrap().clone())?;
+            serde_json::from_value(response.get("items").unwrap().clone())
+                .wrap_err("Failed to deserialize Google Books response")?;
 
         Ok(search_results.into_iter().map(|res| GBook {
             id: res.id,

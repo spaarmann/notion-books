@@ -1,6 +1,7 @@
 mod gbooks;
 
-use std::{error::Error, io::Write};
+use eyre::{Context, Result};
+use std::io::Write;
 
 use crate::gbooks::GBooks;
 
@@ -13,13 +14,19 @@ fn read_stdin_line() -> Result<String, std::io::Error> {
 }
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn Error>> {
+async fn main() -> Result<()> {
+    color_eyre::install()?;
+
     let gbooks = GBooks::new(include_str!("../books_api_key.txt").to_string());
 
     print!("Enter query: ");
     let query = read_stdin_line()?;
 
-    let search_results = gbooks.search(&query).await?.collect::<Vec<_>>();
+    let search_results = gbooks
+        .search(&query)
+        .await
+        .wrap_err("Failed to search on Google Books")?
+        .collect::<Vec<_>>();
 
     let chosen_idx = if search_results.len() == 1 {
         0
@@ -30,7 +37,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
 
         print!("> ");
-        read_stdin_line()?.parse::<usize>()?
+        read_stdin_line()?
+            .parse::<usize>()
+            .wrap_err("Invalid result index")?
     };
 
     println!("{:#?}", search_results[chosen_idx]);

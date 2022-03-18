@@ -1,14 +1,26 @@
-mod gbooks;
+#![feature(let_else)]
+#![feature(iterator_try_collect)]
 
+mod gbooks;
+mod notion;
+
+use gbooks::GBook;
 use miette::{Context, IntoDiagnostic, Result};
 use std::io::Write;
 
-use crate::gbooks::GBooks;
+use crate::{
+    gbooks::GBooks,
+    notion::{Notion, NotionBookEntry},
+};
 
 #[derive(knuffel::Decode)]
 struct Config {
     #[knuffel(child, unwrap(argument))]
     google_books_api_key: String,
+    #[knuffel(child, unwrap(argument))]
+    notion_integration_token: String,
+    #[knuffel(child, unwrap(argument))]
+    notion_database_id: String,
 }
 
 fn read_stdin_line() -> Result<String> {
@@ -33,6 +45,23 @@ async fn main() -> Result<()> {
     let config = read_config().wrap_err("Failed to read configuration file")?;
     let gbooks = GBooks::new(config.google_books_api_key);
 
+    let notion = Notion::new(config.notion_integration_token);
+    let database = notion.database(config.notion_database_id).await?;
+
+    //let test_entry = NotionBookEntry {
+    //    tile: "Some test entry".to_string(),
+    //    authors: vec!["an author".to_string()],
+    //    publisher: "a publisher!".to_string(),
+    //    publish_date: "2023".to_string(),
+    //    isbn: "1029312".to_string(),
+    //    cover_url: "a url".to_string(),
+    //    description: "a description".to_string(),
+    //};
+
+    //database.add_entry(test_entry).await?;
+    //println!("{:#?}", database.get().await?);
+    //return Ok(());
+
     print!("Enter query: ");
     let query = read_stdin_line()?;
 
@@ -47,7 +76,7 @@ async fn main() -> Result<()> {
     } else {
         println!("Choose book:");
         for (i, book) in search_results.iter().enumerate() {
-            println!("{i}: {}", book);
+            println!("{i}: {book}");
         }
 
         print!("> ");
@@ -57,7 +86,91 @@ async fn main() -> Result<()> {
             .wrap_err("Invalid result index")?
     };
 
-    println!("{:#?}", search_results[chosen_idx]);
+    let gbook = &search_results[chosen_idx];
+    let query_results = database.search(&gbook.title).await?;
+
+    enum Action {
+        CreateNew,
+        Update(usize),
+    }
+
+    let action = if query_results.len() > 0 {
+        println!("Choose what you want to do:");
+        println!("0: Create a new entry");
+        for (i, entry) in query_results.iter().enumerate() {
+            println!("{}: Update {entry}", i + 1);
+        }
+        let choice = read_stdin_line()?
+            .parse::<usize>()
+            .into_diagnostic()
+            .wrap_err("Invalid choice")?;
+        if choice == 0 {
+            Action::CreateNew
+        } else {
+            Action::Update(choice - 1)
+        }
+    } else {
+        println!("No matching entries found. Create new? (Y/N)");
+        let choice = read_stdin_line()?;
+        match choice.as_str() {
+            "Y" | "y" | "Yes" | "yes" => Action::CreateNew,
+            _ => return Ok(()),
+        }
+    };
+
+    match action {
+        Action::CreateNew => {
+            let entry = create_notion_entry_from_gbook(gbook);
+            database
+                .add_entry(entry)
+                .await
+                .wrap_err("Failed to add new entry")?;
+        }
+        Action::Update(entry_idx) => {
+            let mut entry_to_update = query_results[entry_idx].clone();
+            update_notion_entry_from_gbook(&mut entry_to_update, gbook);
+            database
+                .update_entry(entry_to_update)
+                .await
+                .wrap_err("Failed to update entry")?;
+        }
+    }
+
+    println!("{:#?}", query_results);
 
     Ok(())
+}
+
+fn create_notion_entry_from_gbook(gbook: &GBook) -> NotionBookEntry {
+    NotionBookEntry {
+        id: None,
+        title: gbook.title.clone(),
+        authors: gbook.authors.clone(),
+        author_ids: vec![None; gbook.authors.len()],
+        publisher: gbook.publisher.clone(),
+        publisher_id: None,
+        published_date: gbook.published_date.clone(),
+        //description: gbook.description.clone(),
+        isbn: gbook.isbn.clone(),
+    }
+}
+
+fn update_notion_entry_from_gbook(entry_to_update: &mut NotionBookEntry, gbook: &GBook) {
+    if entry_to_update.authors.is_empty() {
+        entry_to_update.authors = gbook.authors.clone();
+        entry_to_update.author_ids = vec![None; entry_to_update.authors.len()];
+    }
+
+    if entry_to_update.publisher.is_none() {
+        entry_to_update.publisher = gbook.publisher.clone();
+        entry_to_update.publisher_id = None;
+    }
+
+    if entry_to_update.published_date.is_none() {
+        entry_to_update.published_date = gbook.published_date.clone();
+    }
+
+    if entry_to_update.isbn.is_none() {
+        entry_to_update.isbn = gbook.isbn.clone();
+    }
 }

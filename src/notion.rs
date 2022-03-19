@@ -12,18 +12,10 @@ pub struct Notion {
     client: Client,
 }
 
-#[derive(Clone, Debug)]
-pub struct StringOption {
-    id: String,
-    name: String,
-}
-
 #[derive(Debug)]
 pub struct Database<'notion> {
     notion: &'notion Notion,
     database_id: String,
-    publishers: Vec<StringOption>,
-    authors: Vec<StringOption>,
 }
 
 #[derive(Debug, Clone)]
@@ -100,59 +92,19 @@ impl Notion {
 
 impl<'notion> Database<'notion> {
     async fn get(notion: &'notion Notion, database_id: String) -> Result<Database<'notion>> {
-        let response = notion
-            .request(Method::GET, &format!("/databases/{}", database_id), |req| {
-                req
-            })
-            .await?;
+        // This is async so that we could potentially grab some metadata about the database and its
+        // schema, or just check if it exists, or similar.
+        // We don't currently do any of those though.
 
-        let props = &response["properties"];
-
-        let authors = &props["Authors"]["multi_select"]["options"];
-        let Value::Array(authors) = authors else {
-            return Err(miette!("Unexpected database schema!"));
-        };
-        let authors = authors
-            .into_iter()
-            .map(|author| -> Result<StringOption> {
-                Ok(StringOption {
-                    id: author["id"]
-                        .as_str()
-                        .ok_or_else(|| miette!("Unexpected database schema!"))?
-                        .to_string(),
-                    name: author["name"]
-                        .as_str()
-                        .ok_or_else(|| miette!("Unexpected database schema!"))?
-                        .to_string(),
-                })
-            })
-            .try_collect::<Vec<_>>()?;
-
-        let publishers = &props["Publisher"]["select"]["options"];
-        let Value::Array(publishers) = publishers else {
-            return Err(miette!("Unexpected database schema!"));
-        };
-        let publishers = publishers
-            .into_iter()
-            .map(|publisher| -> Result<StringOption> {
-                Ok(StringOption {
-                    id: publisher["id"]
-                        .as_str()
-                        .ok_or_else(|| miette!("Unexpected database schema!"))?
-                        .to_string(),
-                    name: publisher["name"]
-                        .as_str()
-                        .ok_or_else(|| miette!("Unexpected database schema!"))?
-                        .to_string(),
-                })
-            })
-            .try_collect::<Vec<_>>()?;
+        //let response = notion
+        //    .request(Method::GET, &format!("/databases/{}", database_id), |req| {
+        //        req
+        //    })
+        //    .await?;
 
         Ok(Self {
             notion,
             database_id,
-            authors,
-            publishers,
         })
     }
 

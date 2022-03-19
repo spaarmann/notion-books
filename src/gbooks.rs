@@ -13,7 +13,6 @@ pub struct GBooks {
 
 #[derive(Debug, Clone)]
 pub struct GBook {
-    id: String,
     pub title: String,
     pub authors: Vec<String>,
     pub publisher: Option<String>,
@@ -118,7 +117,6 @@ impl GBooks {
         Ok(volumes.into_iter().map(|volume| {
             let isbn = volume.volume_info.get_isbn();
             GBook {
-                id: volume.id,
                 title: volume.volume_info.title,
                 authors: volume.volume_info.authors.unwrap_or_default(),
                 publisher: volume.volume_info.publisher,
@@ -146,10 +144,9 @@ impl GBooks {
     }
 }
 
-#[derive(Deserialize, Debug)]
+#[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct SearchResult {
-    id: String,
     volume_info: VolumeInfo,
 }
 

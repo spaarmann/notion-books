@@ -18,10 +18,16 @@ use crate::{
 struct Config {
     #[knuffel(child, unwrap(argument))]
     google_books_api_key: String,
+    #[knuffel(child)]
+    notion: NotionConfig,
+}
+
+#[derive(knuffel::Decode)]
+struct NotionConfig {
     #[knuffel(child, unwrap(argument))]
-    notion_integration_token: String,
+    integration_token: String,
     #[knuffel(child, unwrap(argument))]
-    notion_database_id: String,
+    database_id: String,
 }
 
 #[derive(clap::Parser)]
@@ -59,8 +65,8 @@ async fn main() -> Result<()> {
     let config = read_config().wrap_err("Failed to read configuration file")?;
     let gbooks = GBooks::new(config.google_books_api_key);
 
-    let notion = Notion::new(config.notion_integration_token);
-    let database = notion.database(config.notion_database_id).await?;
+    let notion = Notion::new(config.notion.integration_token);
+    let database = notion.database(config.notion.database_id).await?;
 
     loop {
         let query = if args.isbn {
@@ -106,6 +112,7 @@ async fn main() -> Result<()> {
             for (i, entry) in query_results.iter().enumerate() {
                 println!("{}: Update {entry}", i + 1);
             }
+            print!("> ");
             let choice = read_stdin_line()?
                 .parse::<usize>()
                 .into_diagnostic()
@@ -117,6 +124,7 @@ async fn main() -> Result<()> {
             }
         } else {
             println!("No matching entries found. Create new? (Y/N)");
+            print!("> ");
             let choice = read_stdin_line()?;
             match choice.as_str() {
                 "Y" | "y" | "Yes" | "yes" => Action::CreateNew,

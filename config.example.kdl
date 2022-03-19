@@ -1,3 +1,5 @@
 google-books-api-key "insert your Google Books API key here"
-notion-integration-token "insert your Notion integration token here"
-notion-database-id "insert the ID of your Notion database here"
+notion {
+	integration-token "insert your Notion integration token here"
+	database-id "insert the ID of your Notion database here"
+}

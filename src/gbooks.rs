@@ -123,7 +123,10 @@ impl GBooks {
                 published_date: volume.volume_info.published_date,
                 description: volume.volume_info.description,
                 isbn,
-                image_link: volume.volume_info.image_links.map(|links| links.thumbnail),
+                image_link: volume
+                    .volume_info
+                    .image_links
+                    .and_then(|links| links.into_largest_image()),
             }
         }))
     }
@@ -165,7 +168,12 @@ struct VolumeInfo {
 #[derive(Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
 struct ImageLinks {
-    thumbnail: String,
+    small_thumbnail: Option<String>,
+    thumbnail: Option<String>,
+    small: Option<String>,
+    medium: Option<String>,
+    large: Option<String>,
+    extra_large: Option<String>,
 }
 
 #[derive(Deserialize, Debug)]
@@ -184,5 +192,16 @@ impl VolumeInfo {
             }
         }
         None
+    }
+}
+
+impl ImageLinks {
+    fn into_largest_image(self) -> Option<String> {
+        self.extra_large
+            .or(self.large)
+            .or(self.medium)
+            .or(self.small)
+            .or(self.thumbnail)
+            .or(self.small_thumbnail)
     }
 }

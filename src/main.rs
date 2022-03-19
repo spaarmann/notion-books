@@ -48,20 +48,6 @@ async fn main() -> Result<()> {
     let notion = Notion::new(config.notion_integration_token);
     let database = notion.database(config.notion_database_id).await?;
 
-    //let test_entry = NotionBookEntry {
-    //    tile: "Some test entry".to_string(),
-    //    authors: vec!["an author".to_string()],
-    //    publisher: "a publisher!".to_string(),
-    //    publish_date: "2023".to_string(),
-    //    isbn: "1029312".to_string(),
-    //    cover_url: "a url".to_string(),
-    //    description: "a description".to_string(),
-    //};
-
-    //database.add_entry(test_entry).await?;
-    //println!("{:#?}", database.get().await?);
-    //return Ok(());
-
     print!("Enter query: ");
     let query = read_stdin_line()?;
 
@@ -136,8 +122,6 @@ async fn main() -> Result<()> {
         }
     }
 
-    println!("{:#?}", query_results);
-
     Ok(())
 }
 
@@ -150,8 +134,9 @@ fn create_notion_entry_from_gbook(gbook: &GBook) -> NotionBookEntry {
         publisher: gbook.publisher.clone(),
         publisher_id: None,
         published_date: gbook.published_date.clone(),
-        //description: gbook.description.clone(),
         isbn: gbook.isbn.clone(),
+        description: gbook.description.clone(),
+        had_original_description: false,
     }
 }
 
@@ -172,5 +157,9 @@ fn update_notion_entry_from_gbook(entry_to_update: &mut NotionBookEntry, gbook: 
 
     if entry_to_update.isbn.is_none() {
         entry_to_update.isbn = gbook.isbn.clone();
+    }
+
+    if !entry_to_update.had_original_description {
+        entry_to_update.description = gbook.description.clone();
     }
 }

@@ -34,9 +34,16 @@ pub struct NotionBookEntry {
     pub published_date: Option<String>,
     pub isbn: Option<String>,
     //pub cover_url: Option<String>,
-    //pub description: Option<String>,
     pub author_ids: Vec<Option<String>>,
     pub publisher_id: Option<String>,
+
+    // Description is special in that we do not have sufficient code to correctly read a whole
+    // page body and set it again when editing an entry, since we pretend it's just a simple
+    // string (rather than a list of blocks).
+    // To avoid deleting data, only ever *set* a description when editing an entry, if there was
+    // no page body at all before.
+    pub had_original_description: bool,
+    pub description: Option<String>,
 }
 
 impl Notion {
@@ -168,17 +175,80 @@ impl<'notion> Database<'notion> {
             )
             .await?;
 
-        let results = response["results"]
+        let response = response["results"]
             .as_array()
-            .ok_or_else(|| miette!("No results array in Notion API response!"))?
-            .into_iter()
-            .map(|res| res.try_into())
-            .try_collect()?;
+            .ok_or_else(|| miette!("No results array in Notion API response!"))?;
+
+        let mut results = Vec::with_capacity(response.len());
+        for res in response {
+            let mut entry: NotionBookEntry = res.try_into()?;
+
+            self.get_description(&mut entry)
+                .await
+                .wrap_err("Failed to get description for page!")?;
+
+            results.push(entry);
+        }
 
         Ok(results)
     }
 
+    async fn get_description(&self, entry: &mut NotionBookEntry) -> Result<()> {
+        let id = entry
+            .id
+            .as_ref()
+            .ok_or_else(|| miette!("Tried to retrieve description for entry without ID!"))?;
+        let response = self
+            .notion
+            .request(Method::GET, &format!("/blocks/{}/children", id), |req| req)
+            .await?;
+
+        let results = response["results"]
+            .as_array()
+            .ok_or_else(|| miette!("Get blocks API response has no results!"))?;
+
+        if let Some(block) = results.first() {
+            entry.had_original_description = true;
+
+            if let Some(paragraph) = block.get("paragraph") {
+                entry.description = Some(
+                    paragraph["rich_text"][0]["plain_text"]
+                        .as_str()
+                        .unwrap()
+                        .to_string(),
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn set_description(&self, id: String, description: String) -> Result<()> {
+        let body = json!({
+            "children": [{
+                "object": "block",
+                "type": "paragraph",
+                "paragraph": {
+                    "rich_text": [{
+                        "type": "text",
+                        "text": { "content": description }
+                    }]
+                }
+            }]
+        });
+
+        self.notion
+            .request(Method::PATCH, &format!("/blocks/{}/children", id), |req| {
+                req.json(&body)
+            })
+            .await?;
+
+        Ok(())
+    }
+
     pub async fn add_entry(&self, book: NotionBookEntry) -> Result<()> {
+        let description = book.description.clone();
+
         let body = json!({
             "parent": {
                 "database_id": self.database_id
@@ -191,7 +261,14 @@ impl<'notion> Database<'notion> {
             .request(Method::POST, "/pages/", |req| req.json(&body))
             .await?;
 
-        println!("Response: {}", response);
+        if let Some(description) = description {
+            let added_entry =
+                NotionBookEntry::try_from(&response).wrap_err("Failed to parse added page")?;
+            self.set_description(added_entry.id.unwrap(), description)
+                .await
+                .wrap_err("Failed to set description for new entry!")?;
+        }
+
         Ok(())
     }
 
@@ -200,16 +277,27 @@ impl<'notion> Database<'notion> {
             .id
             .clone()
             .ok_or_else(|| miette!("Tried to update entry but don't know ID"))?;
+
+        let description_to_set = if book.had_original_description {
+            None
+        } else {
+            book.description.clone()
+        };
+
         let body = json!({ "properties": properties_from_entry(book) });
 
-        let response = self
-            .notion
+        self.notion
             .request(Method::PATCH, &format!("/pages/{}", id), |req| {
                 req.json(&body)
             })
             .await?;
 
-        println!("Response: {}", response);
+        if let Some(description) = description_to_set {
+            self.set_description(id, description)
+                .await
+                .wrap_err("Failed to set description!")?;
+        }
+
         Ok(())
     }
 }
@@ -250,11 +338,12 @@ impl TryFrom<&Value> for NotionBookEntry {
                     .get(0)
                     .map(|isbn| isbn["plain_text"].as_str().unwrap().to_string()),
                 //cover_url: None,
-                //description: None,
                 author_ids,
                 publisher_id: props["Publisher"]["select"]
                     .as_object()
                     .map(|obj| obj["id"].as_str().unwrap().to_string()),
+                description: None,
+                had_original_description: false,
             })
         })()
         .ok_or_else(|| miette!("Failed to parse database entry!"))
@@ -263,6 +352,8 @@ impl TryFrom<&Value> for NotionBookEntry {
 
 fn properties_from_entry(entry: NotionBookEntry) -> Value {
     let mut properties = Map::<String, Value>::new();
+
+    properties.insert("Type".to_string(), json!({ "select": { "name": "Book" } }));
 
     properties.insert(
         "Name".to_string(),

@@ -1,5 +1,6 @@
 use std::fmt::Display;
 
+use futures::future;
 use miette::{miette, IntoDiagnostic, Result, WrapErr};
 use reqwest::{Client, Method, RequestBuilder};
 use serde_json::{json, Map, Value};
@@ -180,21 +181,20 @@ impl<'notion> Database<'notion> {
             .as_array()
             .ok_or_else(|| miette!("No results array in Notion API response!"))?;
 
-        let mut results = Vec::with_capacity(response.len());
-        for res in response {
-            let mut entry: NotionBookEntry = res.try_into()?;
+        let results: Vec<NotionBookEntry> = response
+            .into_iter()
+            .map(|res| res.try_into())
+            .try_collect()?;
 
-            self.get_description(&mut entry)
+        let results =
+            future::try_join_all(results.into_iter().map(|entry| self.get_description(entry)))
                 .await
                 .wrap_err("Failed to get description for page!")?;
-
-            results.push(entry);
-        }
 
         Ok(results)
     }
 
-    async fn get_description(&self, entry: &mut NotionBookEntry) -> Result<()> {
+    async fn get_description(&self, mut entry: NotionBookEntry) -> Result<NotionBookEntry> {
         let id = entry
             .id
             .as_ref()
@@ -221,7 +221,7 @@ impl<'notion> Database<'notion> {
             }
         }
 
-        Ok(())
+        Ok(entry)
     }
 
     async fn set_description(&self, id: String, description: String) -> Result<()> {

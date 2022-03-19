@@ -1,3 +1,4 @@
+use futures::future;
 use miette::{miette, Context, IntoDiagnostic, Result};
 use reqwest::{Client, Method, RequestBuilder};
 use serde_derive::Deserialize;
@@ -100,17 +101,19 @@ impl GBooks {
                 },
                 |req| req,
             )
-            .await?;
+            .await
+            .wrap_err("Failed to search on Google Books")?;
 
-        let mut volumes = Vec::new();
-        for id in response["items"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .map(|item| item["id"].as_str().unwrap().to_string())
-        {
-            volumes.push(self.get(id).await?);
-        }
+        let volumes = future::try_join_all(
+            response["items"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|item| item["id"].as_str().unwrap().to_string())
+                .map(|id| self.get(id)),
+        )
+        .await
+        .wrap_err("Failed to retrieve detailed Google Books search result information")?;
 
         Ok(volumes.into_iter().map(|volume| {
             let isbn = volume.volume_info.get_isbn();

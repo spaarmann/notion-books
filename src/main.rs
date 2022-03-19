@@ -135,6 +135,7 @@ fn create_notion_entry_from_gbook(gbook: &GBook) -> NotionBookEntry {
         publisher_id: None,
         published_date: gbook.published_date.clone(),
         isbn: gbook.isbn.clone(),
+        cover_url: gbook.image_link.clone(),
         description: gbook.description.clone(),
         had_original_description: false,
     }
@@ -157,6 +158,10 @@ fn update_notion_entry_from_gbook(entry_to_update: &mut NotionBookEntry, gbook: 
 
     if entry_to_update.isbn.is_none() {
         entry_to_update.isbn = gbook.isbn.clone();
+    }
+
+    if entry_to_update.cover_url.is_none() {
+        entry_to_update.cover_url = gbook.image_link.clone();
     }
 
     if !entry_to_update.had_original_description {

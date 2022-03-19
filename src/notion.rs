@@ -33,7 +33,7 @@ pub struct NotionBookEntry {
     pub publisher: Option<String>,
     pub published_date: Option<String>,
     pub isbn: Option<String>,
-    //pub cover_url: Option<String>,
+    pub cover_url: Option<String>,
     pub author_ids: Vec<Option<String>>,
     pub publisher_id: Option<String>,
 
@@ -248,13 +248,20 @@ impl<'notion> Database<'notion> {
 
     pub async fn add_entry(&self, book: NotionBookEntry) -> Result<()> {
         let description = book.description.clone();
+        let cover_url = book.cover_url.clone();
 
-        let body = json!({
+        let mut body = json!({
             "parent": {
                 "database_id": self.database_id
             },
             "properties": properties_from_entry(book)
         });
+
+        if let Some(url) = cover_url {
+            body.as_object_mut()
+                .unwrap()
+                .insert("cover".to_string(), json!({ "external": { "url": url } }));
+        }
 
         let response = self
             .notion
@@ -284,7 +291,15 @@ impl<'notion> Database<'notion> {
             book.description.clone()
         };
 
-        let body = json!({ "properties": properties_from_entry(book) });
+        let cover_url = book.cover_url.clone();
+
+        let mut body = json!({ "properties": properties_from_entry(book) });
+
+        if let Some(url) = cover_url {
+            body.as_object_mut()
+                .unwrap()
+                .insert("cover".to_string(), json!({ "external": { "url": url } }));
+        }
 
         self.notion
             .request(Method::PATCH, &format!("/pages/{}", id), |req| {
@@ -322,6 +337,10 @@ impl TryFrom<&Value> for NotionBookEntry {
 
             Some(Self {
                 id: Some(value["id"].as_str()?.to_string()),
+                cover_url: value
+                    .get("cover")
+                    .filter(|c| c.is_object())
+                    .map(|c| c["external"]["url"].as_str().unwrap().to_string()),
                 title: props["Name"]["title"].as_array()?[0]["plain_text"]
                     .as_str()?
                     .to_string(),

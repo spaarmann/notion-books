@@ -161,7 +161,7 @@ struct VolumeInfo {
     publisher: Option<String>,
     published_date: Option<String>,
     description: Option<String>,
-    industry_identifiers: Vec<IndustryIdentifier>,
+    industry_identifiers: Option<Vec<IndustryIdentifier>>,
     image_links: Option<ImageLinks>,
 }
 
@@ -186,9 +186,11 @@ struct IndustryIdentifier {
 
 impl VolumeInfo {
     fn get_isbn(&self) -> Option<String> {
-        for id in &self.industry_identifiers {
-            if id.ty == "ISBN_13" {
-                return Some(id.identifier.clone());
+        if let Some(ids) = &self.industry_identifiers {
+            for id in ids {
+                if id.ty == "ISBN_13" {
+                    return Some(id.identifier.clone());
+                }
             }
         }
         None

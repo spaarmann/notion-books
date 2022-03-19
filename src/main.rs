@@ -62,91 +62,91 @@ async fn main() -> Result<()> {
     let notion = Notion::new(config.notion_integration_token);
     let database = notion.database(config.notion_database_id).await?;
 
-    let query = if args.isbn {
-        print!("Enter isbn: ");
-        format!("isbn:{}", read_stdin_line()?)
-    } else {
-        print!("Enter query: ");
-        read_stdin_line()?
-    };
-
-    let search_results = gbooks
-        .search(&query)
-        .await
-        .wrap_err("Failed to search on Google Books")?
-        .collect::<Vec<_>>();
-
-    let chosen_idx = if search_results.len() == 1 {
-        0
-    } else {
-        println!("Choose book:");
-        for (i, book) in search_results.iter().enumerate() {
-            println!("{i}: {book}");
-        }
-
-        print!("> ");
-        read_stdin_line()?
-            .parse::<usize>()
-            .into_diagnostic()
-            .wrap_err("Invalid result index")?
-    };
-
-    let gbook = &search_results[chosen_idx];
-    let query_results = database.search(&gbook.title).await?;
-
-    enum Action {
-        CreateNew,
-        Update(usize),
-    }
-
-    let action = if query_results.len() > 0 {
-        println!("Choose what you want to do:");
-        println!("0: Create a new entry");
-        for (i, entry) in query_results.iter().enumerate() {
-            println!("{}: Update {entry}", i + 1);
-        }
-        let choice = read_stdin_line()?
-            .parse::<usize>()
-            .into_diagnostic()
-            .wrap_err("Invalid choice")?;
-        if choice == 0 {
-            Action::CreateNew
+    loop {
+        let query = if args.isbn {
+            print!("Enter isbn: ");
+            format!("isbn:{}", read_stdin_line()?)
         } else {
-            Action::Update(choice - 1)
-        }
-    } else {
-        println!("No matching entries found. Create new? (Y/N)");
-        let choice = read_stdin_line()?;
-        match choice.as_str() {
-            "Y" | "y" | "Yes" | "yes" => Action::CreateNew,
-            _ => return Ok(()),
-        }
-    };
+            print!("Enter query: ");
+            read_stdin_line()?
+        };
 
-    match action {
-        Action::CreateNew => {
-            let entry = create_notion_entry_from_gbook(gbook, args.owned);
-            database
-                .add_entry(entry)
-                .await
-                .wrap_err("Failed to add new entry")?;
-        }
-        Action::Update(entry_idx) => {
-            let mut entry_to_update = query_results[entry_idx].clone();
-            update_notion_entry_from_gbook(&mut entry_to_update, gbook);
+        let search_results = gbooks
+            .search(&query)
+            .await
+            .wrap_err("Failed to search on Google Books")?
+            .collect::<Vec<_>>();
 
-            if args.owned {
-                entry_to_update.owned = true;
+        let chosen_idx = if search_results.len() == 1 {
+            0
+        } else {
+            println!("Choose book:");
+            for (i, book) in search_results.iter().enumerate() {
+                println!("{i}: {book}");
             }
 
-            database
-                .update_entry(entry_to_update)
-                .await
-                .wrap_err("Failed to update entry")?;
+            print!("> ");
+            read_stdin_line()?
+                .parse::<usize>()
+                .into_diagnostic()
+                .wrap_err("Invalid result index")?
+        };
+
+        let gbook = &search_results[chosen_idx];
+        let query_results = database.search(&gbook.title).await?;
+
+        enum Action {
+            CreateNew,
+            Update(usize),
+        }
+
+        let action = if query_results.len() > 0 {
+            println!("Choose what you want to do:");
+            println!("0: Create a new entry");
+            for (i, entry) in query_results.iter().enumerate() {
+                println!("{}: Update {entry}", i + 1);
+            }
+            let choice = read_stdin_line()?
+                .parse::<usize>()
+                .into_diagnostic()
+                .wrap_err("Invalid choice")?;
+            if choice == 0 {
+                Action::CreateNew
+            } else {
+                Action::Update(choice - 1)
+            }
+        } else {
+            println!("No matching entries found. Create new? (Y/N)");
+            let choice = read_stdin_line()?;
+            match choice.as_str() {
+                "Y" | "y" | "Yes" | "yes" => Action::CreateNew,
+                _ => return Ok(()),
+            }
+        };
+
+        match action {
+            Action::CreateNew => {
+                let entry = create_notion_entry_from_gbook(gbook, args.owned);
+                database
+                    .add_entry(entry)
+                    .await
+                    .wrap_err("Failed to add new entry")?;
+            }
+            Action::Update(entry_idx) => {
+                let mut entry_to_update = query_results[entry_idx].clone();
+                update_notion_entry_from_gbook(&mut entry_to_update, gbook);
+
+                if args.owned {
+                    entry_to_update.owned = true;
+                }
+
+                database
+                    .update_entry(entry_to_update)
+                    .await
+                    .wrap_err("Failed to update entry")?;
+            }
         }
     }
-
-    Ok(())
 }
 
 fn create_notion_entry_from_gbook(gbook: &GBook, owned: bool) -> NotionBookEntry {

@@ -1,8 +1,9 @@
-use miette::{Context, IntoDiagnostic, Result};
-use reqwest::Client;
+use miette::{miette, Context, IntoDiagnostic, Result};
+use reqwest::{Client, Method, RequestBuilder};
 use serde_derive::Deserialize;
+use serde_json::Value;
 use std::fmt::Display;
-use url::Url;
+use url::{form_urlencoded::Serializer, Url, UrlQuery};
 
 pub struct GBooks {
     api_key: String,
@@ -50,49 +51,95 @@ impl GBooks {
         }
     }
 
-    pub async fn search(&self, query: &str) -> Result<impl Iterator<Item = GBook>> {
+    async fn request<U, R>(&self, method: Method, endpoint: &str, u: U, r: R) -> Result<Value>
+    where
+        U: FnOnce(&mut Serializer<'_, UrlQuery<'_>>),
+        R: FnOnce(RequestBuilder) -> RequestBuilder,
+    {
         let url = {
-            let mut url = Url::parse("https://www.googleapis.com/books/v1/volumes").unwrap();
-            url.query_pairs_mut()
-                .append_pair("key", &self.api_key)
-                .append_pair("projection", "full")
-                .append_pair("q", query);
+            let mut url =
+                Url::parse(&format!("https://www.googleapis.com/books/v1{endpoint}")).unwrap();
+            let mut pairs = url.query_pairs_mut();
+            pairs.append_pair("key", &self.api_key);
+            u(&mut pairs);
+            drop(pairs);
             url
         };
 
-        let response = self
-            .client
-            .get(url)
+        let default_request = self.client.request(method, url);
+        let request = r(default_request);
+
+        let response = request
             .send()
             .await
             .into_diagnostic()
-            .wrap_err("Failed to send search request to Google Books")?
-            .error_for_status()
-            .into_diagnostic()
-            .wrap_err("Failed to search on Google Books")?
-            .json::<serde_json::Value>()
+            .wrap_err("Failed to send GBooks API request")?;
+
+        let status = response.status();
+        let response_body = response
+            .json::<Value>()
             .await
             .into_diagnostic()
-            .wrap_err("Failed to read or parse Google Books response")?;
+            .wrap_err("Failed to read GBooks API response")?;
 
-        let search_results: Vec<SearchResult> =
-            serde_json::from_value(response.get("items").unwrap().clone())
-                .into_diagnostic()
-                .wrap_err("Failed to deserialize Google Books response")?;
+        if !status.is_success() {
+            return Err(miette!("Error {}:\n{:#?}", status, response_body));
+        }
 
-        Ok(search_results.into_iter().map(|res| {
-            let isbn = res.volume_info.get_isbn();
+        Ok(response_body)
+    }
+
+    pub async fn search(&self, query: &str) -> Result<impl Iterator<Item = GBook>> {
+        let response = self
+            .request(
+                Method::GET,
+                "/volumes",
+                |url| {
+                    url.append_pair("projection", "lite")
+                        .append_pair("q", query);
+                },
+                |req| req,
+            )
+            .await?;
+
+        let mut volumes = Vec::new();
+        for id in response["items"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item["id"].as_str().unwrap().to_string())
+        {
+            volumes.push(self.get(id).await?);
+        }
+
+        Ok(volumes.into_iter().map(|volume| {
+            let isbn = volume.volume_info.get_isbn();
             GBook {
-                id: res.id,
-                title: res.volume_info.title,
-                authors: res.volume_info.authors.unwrap_or_default(),
-                publisher: res.volume_info.publisher,
-                published_date: res.volume_info.published_date,
-                description: res.volume_info.description,
+                id: volume.id,
+                title: volume.volume_info.title,
+                authors: volume.volume_info.authors.unwrap_or_default(),
+                publisher: volume.volume_info.publisher,
+                published_date: volume.volume_info.published_date,
+                description: volume.volume_info.description,
                 isbn,
-                image_link: res.volume_info.image_links.map(|links| links.thumbnail),
+                image_link: volume.volume_info.image_links.map(|links| links.thumbnail),
             }
         }))
+    }
+
+    async fn get(&self, id: String) -> Result<SearchResult> {
+        let response = self
+            .request(
+                Method::GET,
+                &format!("/volumes/{}", id),
+                |_url| (),
+                |req| req,
+            )
+            .await?;
+
+        Ok(serde_json::from_value(response)
+            .into_diagnostic()
+            .wrap_err("Failed to deserialized GBooks API response")?)
     }
 }
 

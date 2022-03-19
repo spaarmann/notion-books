@@ -1,5 +1,6 @@
 #![feature(let_else)]
 #![feature(iterator_try_collect)]
+#![feature(let_chains)]
 
 mod gbooks;
 mod notion;
@@ -29,6 +30,9 @@ struct Args {
     /// Mark all added or modified books as owned.
     #[clap(long)]
     owned: bool,
+    /// Interpret all queries as being an ISBN.
+    #[clap(long)]
+    isbn: bool,
 }
 
 fn read_stdin_line() -> Result<String> {
@@ -58,8 +62,13 @@ async fn main() -> Result<()> {
     let notion = Notion::new(config.notion_integration_token);
     let database = notion.database(config.notion_database_id).await?;
 
-    print!("Enter query: ");
-    let query = read_stdin_line()?;
+    let query = if args.isbn {
+        print!("Enter isbn: ");
+        format!("isbn:{}", read_stdin_line()?)
+    } else {
+        print!("Enter query: ");
+        read_stdin_line()?
+    };
 
     let search_results = gbooks
         .search(&query)
@@ -141,6 +150,8 @@ async fn main() -> Result<()> {
 }
 
 fn create_notion_entry_from_gbook(gbook: &GBook, owned: bool) -> NotionBookEntry {
+    let descr = gbook.description.clone().map(|s| s.replace("<p>", "\n"));
+
     NotionBookEntry {
         id: None,
         owned,
@@ -152,7 +163,7 @@ fn create_notion_entry_from_gbook(gbook: &GBook, owned: bool) -> NotionBookEntry
         published_date: gbook.published_date.clone(),
         isbn: gbook.isbn.clone(),
         cover_url: gbook.image_link.clone(),
-        description: gbook.description.clone(),
+        description: descr,
         had_original_description: false,
     }
 }
@@ -180,7 +191,8 @@ fn update_notion_entry_from_gbook(entry_to_update: &mut NotionBookEntry, gbook: 
         entry_to_update.cover_url = gbook.image_link.clone();
     }
 
-    if !entry_to_update.had_original_description {
-        entry_to_update.description = gbook.description.clone();
+    if !entry_to_update.had_original_description && let Some(descr) = gbook.description.clone() {
+        let descr = descr.replace("<p>", "\n");
+        entry_to_update.description = Some(descr);
     }
 }

@@ -4,12 +4,12 @@
 mod gbooks;
 mod notion;
 
-use gbooks::GBook;
+use clap::Parser;
 use miette::{Context, IntoDiagnostic, Result};
 use std::io::Write;
 
 use crate::{
-    gbooks::GBooks,
+    gbooks::{GBook, GBooks},
     notion::{Notion, NotionBookEntry},
 };
 
@@ -21,6 +21,14 @@ struct Config {
     notion_integration_token: String,
     #[knuffel(child, unwrap(argument))]
     notion_database_id: String,
+}
+
+#[derive(clap::Parser)]
+#[clap(author, version)]
+struct Args {
+    /// Mark all added or modified books as owned.
+    #[clap(long)]
+    owned: bool,
 }
 
 fn read_stdin_line() -> Result<String> {
@@ -42,6 +50,8 @@ fn read_config() -> Result<Config> {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    let args = Args::parse();
+
     let config = read_config().wrap_err("Failed to read configuration file")?;
     let gbooks = GBooks::new(config.google_books_api_key);
 
@@ -106,7 +116,7 @@ async fn main() -> Result<()> {
 
     match action {
         Action::CreateNew => {
-            let entry = create_notion_entry_from_gbook(gbook);
+            let entry = create_notion_entry_from_gbook(gbook, args.owned);
             database
                 .add_entry(entry)
                 .await
@@ -115,6 +125,11 @@ async fn main() -> Result<()> {
         Action::Update(entry_idx) => {
             let mut entry_to_update = query_results[entry_idx].clone();
             update_notion_entry_from_gbook(&mut entry_to_update, gbook);
+
+            if args.owned {
+                entry_to_update.owned = true;
+            }
+
             database
                 .update_entry(entry_to_update)
                 .await
@@ -125,9 +140,10 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-fn create_notion_entry_from_gbook(gbook: &GBook) -> NotionBookEntry {
+fn create_notion_entry_from_gbook(gbook: &GBook, owned: bool) -> NotionBookEntry {
     NotionBookEntry {
         id: None,
+        owned,
         title: gbook.title.clone(),
         authors: gbook.authors.clone(),
         author_ids: vec![None; gbook.authors.len()],

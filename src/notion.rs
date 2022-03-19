@@ -29,6 +29,7 @@ pub struct Database<'notion> {
 pub struct NotionBookEntry {
     pub id: Option<String>,
     pub title: String,
+    pub owned: bool,
     pub authors: Vec<String>,
     pub publisher: Option<String>,
     pub published_date: Option<String>,
@@ -335,6 +336,11 @@ impl TryFrom<&Value> for NotionBookEntry {
                 .map(|author| Some(Some(author["id"].as_str()?.to_string())))
                 .try_collect()?;
 
+            let owned = props["Ownership"]["select"]
+                .as_object()
+                .map(|s| s["name"].as_str().unwrap() == "Own")
+                .unwrap_or(false);
+
             Some(Self {
                 id: Some(value["id"].as_str()?.to_string()),
                 cover_url: value
@@ -344,6 +350,7 @@ impl TryFrom<&Value> for NotionBookEntry {
                 title: props["Name"]["title"].as_array()?[0]["plain_text"]
                     .as_str()?
                     .to_string(),
+                owned,
                 authors,
                 publisher: props["Publisher"]["select"]
                     .as_object()
@@ -382,6 +389,15 @@ fn properties_from_entry(entry: NotionBookEntry) -> Value {
             }]
         }),
     );
+
+    if entry.owned {
+        properties.insert(
+            "Ownership".to_string(),
+            json!({
+                "select": { "name": "Own" }
+            }),
+        );
+    }
 
     let authors = entry
         .authors

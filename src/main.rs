@@ -149,8 +149,20 @@ async fn main() -> Result<()> {
     }
 }
 
+fn format_description(description: String) -> String {
+    description
+        .replace("</p><p>", "\n")
+        .replace("</p> <p>", "\n")
+        .replace("<p>", "\n")
+        .replace("</p>", "\n")
+        .replace("<br>", "\n")
+        .replace("&quot;", "\"")
+        .trim()
+        .to_string()
+}
+
 fn create_notion_entry_from_gbook(gbook: &GBook, owned: bool) -> NotionBookEntry {
-    let descr = gbook.description.clone().map(|s| s.replace("<p>", "\n"));
+    let descr = gbook.description.clone().map(format_description);
 
     NotionBookEntry {
         id: None,
@@ -192,7 +204,7 @@ fn update_notion_entry_from_gbook(entry_to_update: &mut NotionBookEntry, gbook: 
     }
 
     if !entry_to_update.had_original_description && let Some(descr) = gbook.description.clone() {
-        let descr = descr.replace("<p>", "\n");
+        let descr = format_description(descr);
         entry_to_update.description = Some(descr);
     }
 }

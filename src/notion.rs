@@ -366,9 +366,10 @@ fn properties_from_entry(entry: NotionBookEntry) -> Value {
     }
 
     if let Some(publisher) = entry.publisher {
+        let sanitized_name = publisher.replace(",", "");
         let value = match entry.publisher_id {
-            Some(id) => json!({ "id": id, "name": publisher }),
-            None => json!({ "name": publisher }),
+            Some(id) => json!({ "id": id, "name": sanitized_name }),
+            None => json!({ "name": sanitized_name }),
         };
         properties.insert(
             "Publisher".to_string(),

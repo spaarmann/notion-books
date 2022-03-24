@@ -1,11 +1,14 @@
 #![feature(let_else)]
+#![feature(drain_filter)]
 #![feature(iterator_try_collect)]
 #![feature(let_chains)]
 
+mod descriptions;
 mod gbooks;
 mod notion;
 
 use clap::Parser;
+use descriptions::RichText;
 use miette::{Context, IntoDiagnostic, Result};
 use std::io::Write;
 
@@ -134,7 +137,7 @@ async fn main() -> Result<()> {
 
         match action {
             Action::CreateNew => {
-                let entry = create_notion_entry_from_gbook(gbook, args.owned);
+                let entry = create_notion_entry_from_gbook(gbook, args.owned)?;
                 database
                     .add_entry(entry)
                     .await
@@ -142,7 +145,7 @@ async fn main() -> Result<()> {
             }
             Action::Update(entry_idx) => {
                 let mut entry_to_update = query_results[entry_idx].clone();
-                update_notion_entry_from_gbook(&mut entry_to_update, gbook);
+                update_notion_entry_from_gbook(&mut entry_to_update, gbook)?;
 
                 if args.owned {
                     entry_to_update.owned = true;
@@ -157,22 +160,20 @@ async fn main() -> Result<()> {
     }
 }
 
-fn format_description(description: String) -> String {
-    description
-        .replace("</p><p>", "\n")
-        .replace("</p> <p>", "\n")
-        .replace("<p>", "\n")
-        .replace("</p>", "\n")
-        .replace("<br>", "\n")
-        .replace("&quot;", "\"")
-        .trim()
-        .to_string()
+fn make_description(gbook: &GBook) -> Result<Option<RichText>> {
+    if let Some(text) = &gbook.description {
+        Ok(Some(
+            descriptions::parse_text(text).wrap_err("Failed to parse description!")?,
+        ))
+    } else {
+        Ok(None)
+    }
 }
 
-fn create_notion_entry_from_gbook(gbook: &GBook, owned: bool) -> NotionBookEntry {
-    let descr = gbook.description.clone().map(format_description);
+fn create_notion_entry_from_gbook(gbook: &GBook, owned: bool) -> Result<NotionBookEntry> {
+    let description = make_description(gbook)?;
 
-    NotionBookEntry {
+    Ok(NotionBookEntry {
         id: None,
         owned,
         title: gbook.title.clone(),
@@ -183,12 +184,15 @@ fn create_notion_entry_from_gbook(gbook: &GBook, owned: bool) -> NotionBookEntry
         published_date: gbook.published_date.clone(),
         isbn: gbook.isbn.clone(),
         cover_url: gbook.image_link.clone(),
-        description: descr,
+        description,
         had_original_description: false,
-    }
+    })
 }
 
-fn update_notion_entry_from_gbook(entry_to_update: &mut NotionBookEntry, gbook: &GBook) {
+fn update_notion_entry_from_gbook(
+    entry_to_update: &mut NotionBookEntry,
+    gbook: &GBook,
+) -> Result<()> {
     if entry_to_update.authors.is_empty() {
         entry_to_update.authors = gbook.authors.clone();
         entry_to_update.author_ids = vec![None; entry_to_update.authors.len()];
@@ -211,8 +215,10 @@ fn update_notion_entry_from_gbook(entry_to_update: &mut NotionBookEntry, gbook: 
         entry_to_update.cover_url = gbook.image_link.clone();
     }
 
-    if !entry_to_update.had_original_description && let Some(descr) = gbook.description.clone() {
-        let descr = format_description(descr);
-        entry_to_update.description = Some(descr);
+    if !entry_to_update.had_original_description {
+        let descr = make_description(gbook)?;
+        entry_to_update.description = descr;
     }
+
+    Ok(())
 }

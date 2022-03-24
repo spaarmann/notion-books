@@ -6,6 +6,8 @@ use reqwest::{Client, Method, RequestBuilder};
 use serde_json::{json, Map, Value};
 use url::Url;
 
+use crate::descriptions::{RichText, TextFragment};
+
 #[derive(Debug)]
 pub struct Notion {
     integration_token: String,
@@ -32,12 +34,13 @@ pub struct NotionBookEntry {
     pub publisher_id: Option<String>,
 
     // Description is special in that we do not have sufficient code to correctly read a whole
-    // page body and set it again when editing an entry, since we pretend it's just a simple
-    // string (rather than a list of blocks).
+    // page body and set it again when editing an entry, since we only support setting a single
+    // block with limited markup (and don't even pretend to support *getting* a description
+    // properly).
     // To avoid deleting data, only ever *set* a description when editing an entry, if there was
     // no page body at all before.
     pub had_original_description: bool,
-    pub description: Option<String>,
+    pub description: Option<RichText>,
 }
 
 impl Notion {
@@ -160,35 +163,15 @@ impl<'notion> Database<'notion> {
             .as_array()
             .ok_or_else(|| miette!("Get blocks API response has no results!"))?;
 
-        if let Some(block) = results.first() {
+        if let Some(_) = results.first() {
             entry.had_original_description = true;
-
-            if let Some(paragraph) = block.get("paragraph") {
-                entry.description = Some(
-                    paragraph["rich_text"][0]["plain_text"]
-                        .as_str()
-                        .unwrap()
-                        .to_string(),
-                );
-            }
         }
 
         Ok(entry)
     }
 
-    async fn set_description(&self, id: String, description: String) -> Result<()> {
-        let body = json!({
-            "children": [{
-                "object": "block",
-                "type": "paragraph",
-                "paragraph": {
-                    "rich_text": [{
-                        "type": "text",
-                        "text": { "content": description }
-                    }]
-                }
-            }]
-        });
+    async fn set_description(&self, id: String, description: &RichText) -> Result<()> {
+        let body = json!({ "children": [rich_text_to_block(description)] });
 
         self.notion
             .request(Method::PATCH, &format!("/blocks/{}/children", id), |req| {
@@ -224,7 +207,7 @@ impl<'notion> Database<'notion> {
         if let Some(description) = description {
             let added_entry =
                 NotionBookEntry::try_from(&response).wrap_err("Failed to parse added page")?;
-            self.set_description(added_entry.id.unwrap(), description)
+            self.set_description(added_entry.id.unwrap(), &description)
                 .await
                 .wrap_err("Failed to set description for new entry!")?;
         }
@@ -261,7 +244,7 @@ impl<'notion> Database<'notion> {
             .await?;
 
         if let Some(description) = description_to_set {
-            self.set_description(id, description)
+            self.set_description(id, &description)
                 .await
                 .wrap_err("Failed to set description!")?;
         }
@@ -402,6 +385,38 @@ fn properties_from_entry(entry: NotionBookEntry) -> Value {
     }
 
     Value::Object(properties)
+}
+
+fn rich_text_to_block(text: &RichText) -> Value {
+    let mut val = Map::<String, Value>::new();
+
+    val.insert("object".to_string(), Value::String("block".to_string()));
+    val.insert("type".to_string(), Value::String("paragraph".to_string()));
+
+    let make_rich_text = |frag: &TextFragment| {
+        json!({
+            "type": "text",
+            "text": { "content": frag.text },
+            "annotations": {
+                "bold": frag.style.bold,
+                "italic": frag.style.italic,
+            },
+        })
+    };
+
+    let paragraph = {
+        let mut par = Map::<String, Value>::new();
+
+        par.insert(
+            "rich_text".to_string(),
+            Value::Array(text.fragments.iter().map(make_rich_text).collect()),
+        );
+
+        Value::Object(par)
+    };
+    val.insert("paragraph".to_string(), paragraph);
+
+    Value::Object(val)
 }
 
 impl Display for NotionBookEntry {

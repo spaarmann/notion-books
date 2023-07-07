@@ -178,7 +178,7 @@ pub fn parse_text(text: &str) -> Result<RichText> {
     fragments.push(TextFragment::new(current_fragment, current_style));
 
     // To be nice, filter out fragments that are entirely empty.
-    fragments.drain_filter(|frag| frag.text.is_empty());
+    fragments.retain(|frag| !frag.text.is_empty());
 
     // Trim whitespace off the very end of the text.
     fragments

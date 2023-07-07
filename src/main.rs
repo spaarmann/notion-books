@@ -1,5 +1,3 @@
-#![feature(let_else)]
-#![feature(drain_filter)]
 #![feature(iterator_try_collect)]
 #![feature(let_chains)]
 
